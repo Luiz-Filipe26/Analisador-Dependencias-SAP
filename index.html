@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparação de HTML e CSV</title>
+</head>
+
+<body>
+    <input type="file" id="htmlInput" accept=".html, .htm">
+    <input type="file" id="csvInput" accept=".csv">
+    <pre id="output"></pre>
+
+    <script>
+        function parseCSV(csvText) {
+            const lines = csvText.split("\n").map(line => line.trim()).filter(line => line);
+            if (lines.length === 0) return [];
+
+            const firstLine = lines[0];
+            const separator = firstLine.includes(";") && (!firstLine.includes(",") || firstLine.indexOf(";") < firstLine.indexOf(",")) ? ";" : ",";
+
+            const headers = firstLine.split(separator).map(header => header.trim().replace(/\s+/g, "_"));
+
+            return lines.slice(1).map(line => {
+                const values = line.split(separator);
+                return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
+            });
+        }
+
+
+        function getTableObjects(table) {
+            const allTableRows = [
+                ...table.querySelectorAll("thead tr"),
+                ...table.querySelectorAll("tbody tr")
+            ].map(row =>
+                [...row.querySelectorAll("th, td")].map(cell => cell.textContent.trim())
+            );
+
+            const tableHeaders = allTableRows[0].map(header => header.replace(/\s+/g, '_'));
+
+            return allTableRows.slice(1).map(row =>
+                Object.fromEntries(tableHeaders.map((header, index) => [header, row[index] || ""]))
+            );
+        }
+
+        async function getHTMLTables(htmlText) {
+            const tempContainer = document.createElement("div");
+            tempContainer.innerHTML = htmlText;
+            return [...tempContainer.querySelectorAll("table")];
+        }
+
+        function getUniqueObjects(tableObjects) {
+            const seen = new Set();
+            return tableObjects.filter(obj => {
+                const key = `${obj.ID_programa}-${obj.Tipo_de_objeto}-${obj.Nome_do_objeto}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+        }
+
+        function getNameSpaceObjects(tableObjects) {
+            return tableObjects.filter(obj => /^\/.*\//.test(obj.Nome_do_objeto));
+        }
+
+        function getObjectsNotInCSV(htmlObjects, csvObjects) {
+            const csvSet = new Set(csvObjects.map(obj => `${obj.ID_programa}-${obj.Tipo_de_objeto}-${obj.Nome_do_objeto}`));
+            return htmlObjects.filter(obj => !csvSet.has(`${obj.ID_programa}-${obj.Tipo_de_objeto}-${obj.Nome_do_objeto}`));
+        }
+
+        let htmlObjects = [];
+        let csvObjects = [];
+
+        document.getElementById("htmlInput").addEventListener("change", async function (event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const htmlText = await file.text();
+            const htmlTables = await getHTMLTables(htmlText);
+            if (htmlTables.length == 0) {
+                document.getElementById("output").textContent = "Nenhuma tabela encontrada no HTML.";
+                return;
+            }
+            htmlObjects = getNameSpaceObjects(getUniqueObjects(htmlTables.flatMap(table => getTableObjects(table))));
+            document.getElementById("output").textContent = JSON.stringify(htmlObjects, null, 4);
+            checkComparison();
+        });
+
+        document.getElementById("csvInput").addEventListener("change", async function (event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const csvText = await file.text();
+            const newCsvObjects = getNameSpaceObjects(parseCSV(csvText));
+
+            csvObjects = getUniqueObjects([...csvObjects, ...newCsvObjects]);
+
+            checkComparison();
+        });
+        
+        function checkComparison() {
+            if (htmlObjects.length > 0 && csvObjects.length > 0) {
+                const notInCSV = getObjectsNotInCSV(htmlObjects, csvObjects);
+
+                if (notInCSV.length === 0) {
+                    document.getElementById("output").textContent = "Todos os objetos do HTML já estão no CSV.";
+                    return;
+                }
+
+                // Criação do cabeçalho da tabela
+                const headers = ["ID_programa", "Tipo_de_objeto", "Nome_do_objeto"];
+                const rows = notInCSV.map(obj => [obj.ID_programa, obj.Tipo_de_objeto, obj.Nome_do_objeto]);
+
+                // Determinar a largura de cada coluna para alinhamento
+                const colWidths = headers.map((header, i) =>
+                    Math.max(header.length, ...rows.map(row => (row[i] ? String(row[i]).length : 0)))
+                );
+
+                // Função para formatar uma linha com espaçamento adequado
+                const formatRow = (row) =>
+                    row.map((cell, i) => (cell ? String(cell).padEnd(colWidths[i]) : "".padEnd(colWidths[i]))).join(" | ");
+
+                // Montar a tabela
+                const tableText = [
+                    formatRow(headers),
+                    "-".repeat(colWidths.reduce((a, b) => a + b + 3, -3)), // Linha separadora
+                    ...rows.map(formatRow)
+                ].join("\n");
+
+                document.getElementById("output").textContent = tableText;
+            }
+        }
+
+
+    </script>
+</body>
+
+</html>
